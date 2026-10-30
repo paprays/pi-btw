@@ -309,6 +309,12 @@ function isCustomEntry(entry: unknown, customType: string): entry is { type: "cu
   return !!entry && typeof entry === "object" && (entry as { type?: string }).type === "custom" && (entry as { customType?: string }).customType === customType;
 }
 
+// ctx.getSystemPrompt() while idle is pi's base render: it lacks every before_agent_start
+// change (extension sections, narrowed skills). The prompt seen at turn_start is what the
+// main agent was actually sent, so the child inherits that, and providers that match the
+// parent prompt verbatim (claude-bridge) recognize it.
+let lastTurnSystemPrompt: string | undefined;
+
 function stripDynamicSystemPromptFooter(systemPrompt: string): string {
   return systemPrompt
     .replace(/\nCurrent date and time:[^\n]*(?:\nCurrent working directory:[^\n]*)?$/u, "")
@@ -324,7 +330,7 @@ function createBtwResourceLoader(
   workspaceLabel = `local ${ctx.cwd}`,
 ): ResourceLoader {
   const extensionsResult = extensionResources?.getExtensions() ?? { extensions: [], errors: [], runtime: createExtensionRuntime() };
-  const systemPrompt = stripDynamicSystemPromptFooter(ctx.getSystemPrompt());
+  const systemPrompt = stripDynamicSystemPromptFooter(lastTurnSystemPrompt ?? ctx.getSystemPrompt());
   // Preserve the parent's project/custom instructions, but override capability
   // claims in its rendered prompt and in the history seeded into this child.
   const capabilities = () => {
@@ -3003,7 +3009,12 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    lastTurnSystemPrompt = undefined;
     await restoreThread(ctx);
+  });
+
+  pi.on("turn_start", async (_event, ctx) => {
+    lastTurnSystemPrompt = ctx.getSystemPrompt();
   });
 
   pi.on("session_tree", async (_event, ctx) => {

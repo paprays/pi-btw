@@ -963,6 +963,19 @@ describe("btw runtime behavior", () => {
     expect(capabilities).not.toContain("mcp");
   });
 
+  it("inherits the prompt the main agent was sent at turn_start, not pi's idle base render", async () => {
+    const harness = createHarness();
+    await harness.runSessionStart();
+    harness.baseCtx.getSystemPrompt = () => "base\n<extension_section>\nkeep me\n</extension_section>";
+    await harness.runEvent("turn_start");
+    // Idle: pi re-renders without before_agent_start changes.
+    harness.baseCtx.getSystemPrompt = () => "base";
+
+    await harness.command("btw:ask", "side question");
+
+    expect(subSessionRecords[0].promptCalls[0].context.systemPrompt).toContain("<extension_section>\nkeep me\n</extension_section>");
+  });
+
   it("tells the summarizer that no tools are available despite inherited tool claims", async () => {
     const harness = createHarness();
     harness.baseCtx.getSystemPrompt = () => "Available tools: bash, web_search, mcp.";
