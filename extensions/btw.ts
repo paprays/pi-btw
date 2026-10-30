@@ -312,8 +312,17 @@ function isCustomEntry(entry: unknown, customType: string): entry is { type: "cu
 // ctx.getSystemPrompt() while idle is pi's base render: it lacks every before_agent_start
 // change (extension sections, narrowed skills). The prompt seen at turn_start is what the
 // main agent was actually sent, so the child inherits that, and providers that match the
-// parent prompt verbatim (claude-bridge) recognize it.
-let lastTurnSystemPrompt: string | undefined;
+// parent prompt verbatim (claude-bridge) recognize it. Kept on globalThis per session so it
+// survives /reload, which re-evaluates this module inside the same process.
+// shortcut: before the first turn of a fresh process nothing is recorded, so the base render
+// is used; claude-bridge has no captures then either, so that one side question still fails.
+const turnSystemPrompts: Map<string, string> = ((globalThis as Record<symbol, Map<string, string> | undefined>)[
+  Symbol.for("pi-btw:turnSystemPrompts")
+] ??= new Map());
+
+function sessionKey(ctx: ExtensionContext | ExtensionCommandContext): string {
+  return ctx.sessionManager.getSessionId?.() ?? "";
+}
 
 function stripDynamicSystemPromptFooter(systemPrompt: string): string {
   return systemPrompt
@@ -330,7 +339,7 @@ function createBtwResourceLoader(
   workspaceLabel = `local ${ctx.cwd}`,
 ): ResourceLoader {
   const extensionsResult = extensionResources?.getExtensions() ?? { extensions: [], errors: [], runtime: createExtensionRuntime() };
-  const systemPrompt = stripDynamicSystemPromptFooter(lastTurnSystemPrompt ?? ctx.getSystemPrompt());
+  const systemPrompt = stripDynamicSystemPromptFooter(turnSystemPrompts.get(sessionKey(ctx)) ?? ctx.getSystemPrompt());
   // Preserve the parent's project/custom instructions, but override capability
   // claims in its rendered prompt and in the history seeded into this child.
   const capabilities = () => {
@@ -3009,12 +3018,11 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
-    lastTurnSystemPrompt = undefined;
     await restoreThread(ctx);
   });
 
   pi.on("turn_start", async (_event, ctx) => {
-    lastTurnSystemPrompt = ctx.getSystemPrompt();
+    turnSystemPrompts.set(sessionKey(ctx), ctx.getSystemPrompt());
   });
 
   pi.on("session_tree", async (_event, ctx) => {
